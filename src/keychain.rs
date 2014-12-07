@@ -3,10 +3,6 @@ use serialize::json;
 
 pub use encryption_key::{EncryptionKey, EncryptionKeyList};
 
-use rust_crypto::hmac::Hmac;
-use rust_crypto::sha2::Sha256;
-use rust_crypto::digest::Digest;
-
 pub struct Keychain {
     pub path: Path,
     pub keys: Vec<EncryptionKey>
@@ -33,10 +29,9 @@ impl Keychain {
     }
 
     pub fn open(&mut self, password: &str) -> bool {
-        let mut mac = Hmac::new(Sha256::new(), password.as_bytes());
 
         for key in self.keys.iter_mut() {
-            key.unlock(&mut mac);
+            key.unlock(password.as_bytes());
         }
 
         return true;

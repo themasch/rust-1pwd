@@ -9,6 +9,10 @@ use rust_crypto::mac::Mac;
 use rust_crypto::pbkdf2::pbkdf2;
 use rust_crypto::md5::Md5;
 use rust_crypto::digest::Digest;
+use rust_crypto::hmac::Hmac;
+use rust_crypto::sha2::Sha256;
+
+use std::slice::bytes::copy_memory;
 
 struct SaltedString {
     salt: Vec<u8>,
@@ -72,41 +76,57 @@ pub struct EncryptionKey {
 
 impl EncryptionKey {
 
-    pub fn decrypt(&self, data: &SaltedString) -> Vec<u8> {
+    pub fn derive_md5(&self, key: &[u8], salt: &[u8], output: &mut [u8]) {
         // init IV with md5
         let mut hash = Md5::new();
-        let key = self.decrypted_key.as_ref().unwrap();
-        hash.input(key.slice_to(key.len() - 16));
-        hash.input(data.salt.as_slice());
+        hash.input(key);
+        hash.input(salt);
 
         let res = hash.result_str();
+        copy_memory(output, res.as_bytes())
+    }
 
-        //println!("length: {}, salt: {}", res.len(), data.salt);
-        hash.reset();
+    pub fn derive_pbkdf2(&self, key: &[u8], salt: &[u8], output: &mut [u8]) {
+        let mut mac = Hmac::new(Sha256::new(), key);
+        pbkdf2(&mut mac, salt, self.iterations, output);
+    }
 
-        let result_bytes = res.as_bytes();
+    pub fn decrypt(&self, data: &SaltedString) -> Vec<u8> {
+        let key = self.decrypted_key.as_ref().unwrap();
+
+        let mut result_bytes = [0u8, ..32];
+        self.derive_md5(
+            key.slice_to(key.len() - 16),
+            data.salt.as_slice(),
+            &mut result_bytes
+        );
 
         decrypt_aes(result_bytes[0..16], result_bytes[16..32], data.data.as_slice())
     }
 
-    pub fn encrypt(&self, data: Vec<u8>) -> Vec<u8> {
+    /*pub fn encrypt(&self, data: Vec<u8>) -> Vec<u8> {
         return data;
-    }
+    }*/
 
-    pub fn unlock<M: Mac>(&mut self, mac: &mut M) -> bool {
-        let ref salt = self.data.salt;
-        let mut buffer =  [0, ..32];
-        pbkdf2(mac, salt.as_slice(), self.iterations, &mut buffer);
+    pub fn unlock(&mut self, password: &[u8]) -> bool {
+        let salt = self.data.salt.as_slice();
+        let mut buffer =  [0u8, ..32];
+        self.derive_pbkdf2(password, salt, &mut buffer);
 
-        self.decrypted_key = Some(decrypt_aes(buffer[0..16], buffer[16..32], self.data.data.as_slice()));
+        let key = decrypt_aes(
+            buffer[0..16],
+            buffer[16..32],
+            self.data.data.as_slice()
+        );
+        self.decrypted_key = Some(key);
 
-        let ref valid: SaltedString = self.validation;
+        let ref valid = self.validation;
         let decrypted_validation = self.decrypt(valid);
-/*
-        println!("key: {}", self.decrypted_key.as_ref().unwrap());
-        println!("val: {}", decrypted_validation);
+
+        println!("key: {}", self.decrypted_key.as_ref().unwrap().slice_to(10));
+        println!("val: {}", decrypted_validation.slice_to(10));
         println!("key_len: {}", self.decrypted_key.as_ref().unwrap().len());
-        println!("val_len: {}", decrypted_validation.len());*/
+        println!("val_len: {}", decrypted_validation.len());
         true
     }
 }
