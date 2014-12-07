@@ -74,14 +74,14 @@ pub struct EncryptionKey {
 
 impl EncryptionKey {
     pub fn decrypt(&self, data: Vec<u8>) -> Vec<u8> {
-
+        return data;
     }
 
     pub fn encrypt(&self, data: Vec<u8>) -> Vec<u8> {
-
+        return data;
     }
 
-    pub fn unlock<M: Mac>(&self, mac: &mut M, password: &str) -> Vec<u8> {
+    pub fn unlock<M: Mac>(&self, mac: &mut M) -> Vec<u8> {
         let ref salt = self.data.salt;
         let mut buffer =  [0, ..32];
         pbkdf2(mac, salt.as_slice(), self.iterations, &mut buffer);
@@ -92,8 +92,11 @@ impl EncryptionKey {
         let mut enc = cbc_decryptor(KeySize::KeySize128, buffer[0..16], buffer[16..32], NoPadding);
         let mut data = RefReadBuffer::new(self.data.data.as_slice());
         let mut key_buffer = Vec::from_elem(data.capacity(), 0);
-        let mut output = RefWriteBuffer::new(key_buffer.as_mut_slice());
-        let result = enc.decrypt(&mut data, &mut output, true);
+
+        {
+            let mut output = RefWriteBuffer::new(key_buffer.as_mut_slice());
+            enc.decrypt(&mut data, &mut output, true);
+        }
 
         return key_buffer;
     }
@@ -128,7 +131,7 @@ impl Keychain {
         let mut mac = Hmac::new(Sha256::new(), password.as_bytes());
 
         for key in self.keys.iter() {
-
+            key.unlock(&mut mac);
         }
 
         return true;
