@@ -18,5 +18,16 @@ pub fn decrypt_aes(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
         enc.decrypt(&mut data, &mut output, true);
     }
 
-    return key_buffer;
+
+    let padding_size = key_buffer[key_buffer.len() - 1];
+
+    if padding_size >= 16 {
+        return key_buffer
+    }
+    else {
+        let tmp = key_buffer.slice_to(key_buffer.len() - (padding_size as uint));
+        let mut ret = Vec::new();
+        ret.push_all(tmp);
+        return ret
+    }
 }
