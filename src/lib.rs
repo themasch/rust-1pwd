@@ -6,4 +6,6 @@ extern crate "rust-crypto" as rust_crypto;
 
 pub use keychain::Keychain;
 
+mod cryptlib;
+mod encryption_key;
 mod keychain;
