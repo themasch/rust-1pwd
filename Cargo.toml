@@ -3,3 +3,6 @@
 name = "1password"
 version = "0.0.1"
 authors = ["Mark Schmale <masch@masch.it>"]
+
+[dependencies]
+rust-crypto = "*"
