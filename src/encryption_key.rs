@@ -11,8 +11,18 @@ use rust_crypto::md5::Md5;
 use rust_crypto::digest::Digest;
 use rust_crypto::hmac::Hmac;
 use rust_crypto::sha2::Sha256;
+use rust_crypto::sha1::Sha1;
 
 use std::slice::bytes::copy_memory;
+
+use std::io::Writer;
+
+
+fn write_hex(dst: &mut Writer, input: &[u8]) {
+    for &x in input.iter() {
+        write!(dst, "{:X}", x);
+    }
+}
 
 struct SaltedString {
     salt: Vec<u8>,
@@ -36,11 +46,8 @@ impl<E, D: Decoder<E>> Decodable<D, E> for SaltedString {
         let prefix = decoded_string.slice_to(8);
 
         if prefix == "Salted__".as_bytes() {
-            let mut salt: Vec<u8> = Vec::new();
-            let mut data: Vec<u8> = Vec::new();
-
-            salt.push_all(decoded_string[8..16]);
-            data.push_all(decoded_string[16..]);
+            let salt: Vec<u8> = decoded_string[8..16].to_vec();
+            let data: Vec<u8> = decoded_string[16..].to_vec();
 
             return Ok(SaltedString {
                 salt: salt,
@@ -48,8 +55,7 @@ impl<E, D: Decoder<E>> Decodable<D, E> for SaltedString {
             });
         }
 
-        let mut data: Vec<u8> = Vec::new();
-        data.push_all(decoded_string.as_slice());
+        let data: Vec<u8> =decoded_string.to_vec();
 
         return Ok(SaltedString {
             salt: Vec::from_elem(16, 0),
@@ -74,34 +80,72 @@ pub struct EncryptionKey {
     decrypted_key: Option<Vec<u8>>
 }
 
+struct KeyIV {
+    key: [u8, ..16],
+    iv: [u8, ..16]
+}
+
 impl EncryptionKey {
 
-    pub fn derive_md5(&self, key: &[u8], salt: &[u8], output: &mut [u8]) {
+    pub fn derive_md5(&self, password: &[u8], salt: &[u8]) -> KeyIV {
         // init IV with md5
-        let mut hash = Md5::new();
-        hash.input(key);
-        hash.input(salt);
+        let mut input_vec = password.to_vec();
+        let mut key_arr = [0u8, ..16];
+        let mut iv_arr  = [0u8, ..16];
+        input_vec.push_all(salt);
 
-        let res = hash.result_str();
-        copy_memory(output, res.as_bytes())
+        let mut hash = Md5::new();
+        hash.input(input_vec.as_slice());
+
+        hash.result(&mut key_arr);
+
+        hash = Md5::new();
+        hash.input(&key_arr);
+        hash.input(input_vec.as_slice());
+        hash.result(&mut iv_arr);
+
+        let result = KeyIV {
+            key: key_arr,
+            iv: iv_arr
+        };
+
+        let mut key_log: Vec<u8> = Vec::new();
+        let mut iv_log:  Vec<u8> = Vec::new();
+        write_hex(&mut key_log, &result.key);
+        write_hex(&mut iv_log, &result.iv);
+        println!("md5:    {} {}",
+            String::from_utf8(key_log).unwrap(),
+            String::from_utf8(iv_log).unwrap()
+        );
+
+        return result;
+        //copy_memory(output, res.as_bytes())
     }
 
     pub fn derive_pbkdf2(&self, key: &[u8], salt: &[u8], output: &mut [u8]) {
-        let mut mac = Hmac::new(Sha256::new(), key);
+        let mut mac = Hmac::new(Sha1::new(), key);
         pbkdf2(&mut mac, salt, self.iterations, output);
+
+        let mut key_log: Vec<u8> = Vec::new();
+        let mut iv_log:  Vec<u8> = Vec::new();
+        write_hex(&mut key_log, output[0..16]);
+        write_hex(&mut iv_log, output[16..32]);
+        println!("pbkdf2: {} {}",
+            String::from_utf8(key_log).unwrap(),
+            String::from_utf8(iv_log).unwrap()
+        );
+
     }
 
     pub fn decrypt(&self, data: &SaltedString) -> Vec<u8> {
         let key = self.decrypted_key.as_ref().unwrap();
 
-        let mut result_bytes = [0u8, ..32];
-        self.derive_md5(
+        let key_iv = self.derive_md5(
             key.slice_to(key.len() - 16),
-            data.salt.as_slice(),
-            &mut result_bytes
+            data.salt.as_slice()
         );
 
-        decrypt_aes(result_bytes[0..16], result_bytes[16..32], data.data.as_slice())
+        decrypt_aes(&key_iv.key, &key_iv.iv, data.data.as_slice())
     }
 
     /*pub fn encrypt(&self, data: Vec<u8>) -> Vec<u8> {
@@ -118,6 +162,13 @@ impl EncryptionKey {
             buffer[16..32],
             self.data.data.as_slice()
         );
+
+        let mut key_log: Vec<u8> = Vec::new();
+        write_hex(&mut key_log, key.slice_to(32));
+        println!("key:    {}",
+            String::from_utf8(key_log).unwrap()
+        );
+
         self.decrypted_key = Some(key);
 
         let ref valid = self.validation;
@@ -128,6 +179,18 @@ impl EncryptionKey {
         println!("key_len: {}", self.decrypted_key.as_ref().unwrap().len());
         println!("val_len: {}", decrypted_validation.len());
         true
+
+        /*
+        unlock: (password) ->
+            iterations = Math.max(1000, parseInt(@iterations || 0, 10))
+            decrypted = GibberishAES.decryptUsingPBKDF2(@data, password, iterations)
+            return false if !decrypted
+
+            verification = GibberishAES.decryptBase64UsingKey(@validation, GibberishAES.s2a(decrypted))
+            success = verification == decrypted
+            @value = decrypted if success
+            success
+        */
     }
 }
 
