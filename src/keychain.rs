@@ -31,7 +31,9 @@ impl Keychain {
     pub fn open(&mut self, password: &str) -> bool {
 
         for key in self.keys.iter_mut() {
-            key.unlock(password.as_bytes());
+            if !key.unlock(password.as_bytes()) {
+                return false;
+            }
         }
 
         return true;
@@ -56,6 +58,13 @@ mod unittest {
     fn unlock_keychain() {
         let kc_path = Path::new("./testdata/1Password.agilekeychain");
         let mut kc = Keychain::from_file(&kc_path).unwrap();
-        kc.open("password");
+        assert!(kc.open("password"));
+    }
+
+        #[test]
+    fn fail_to_unlock_keychain() {
+        let kc_path = Path::new("./testdata/1Password.agilekeychain");
+        let mut kc = Keychain::from_file(&kc_path).unwrap();
+        assert!(!kc.open("not_the_password"));
     }
 }

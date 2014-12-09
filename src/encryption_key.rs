@@ -1,4 +1,3 @@
-use serialize::json;
 use serialize::base64::FromBase64;
 
 use serialize::{Decoder, Decodable};
@@ -10,19 +9,7 @@ use rust_crypto::pbkdf2::pbkdf2;
 use rust_crypto::md5::Md5;
 use rust_crypto::digest::Digest;
 use rust_crypto::hmac::Hmac;
-use rust_crypto::sha2::Sha256;
 use rust_crypto::sha1::Sha1;
-
-use std::slice::bytes::copy_memory;
-
-use std::io::Writer;
-
-
-fn write_hex(dst: &mut Writer, input: &[u8]) {
-    for &x in input.iter() {
-        write!(dst, "{:X}", x);
-    }
-}
 
 struct SaltedString {
     salt: Vec<u8>,
@@ -96,8 +83,8 @@ impl EncryptionKey {
 
         let mut hash = Md5::new();
         hash.input(input_vec.as_slice());
-
         hash.result(&mut key_arr);
+
 
         hash = Md5::new();
         hash.input(&key_arr);
@@ -109,15 +96,6 @@ impl EncryptionKey {
             iv: iv_arr
         };
 
-        let mut key_log: Vec<u8> = Vec::new();
-        let mut iv_log:  Vec<u8> = Vec::new();
-        write_hex(&mut key_log, &result.key);
-        write_hex(&mut iv_log, &result.iv);
-        println!("md5:    {} {}",
-            String::from_utf8(key_log).unwrap(),
-            String::from_utf8(iv_log).unwrap()
-        );
-
         return result;
         //copy_memory(output, res.as_bytes())
     }
@@ -125,23 +103,13 @@ impl EncryptionKey {
     pub fn derive_pbkdf2(&self, key: &[u8], salt: &[u8], output: &mut [u8]) {
         let mut mac = Hmac::new(Sha1::new(), key);
         pbkdf2(&mut mac, salt, self.iterations, output);
-
-        let mut key_log: Vec<u8> = Vec::new();
-        let mut iv_log:  Vec<u8> = Vec::new();
-        write_hex(&mut key_log, output[0..16]);
-        write_hex(&mut iv_log, output[16..32]);
-        println!("pbkdf2: {} {}",
-            String::from_utf8(key_log).unwrap(),
-            String::from_utf8(iv_log).unwrap()
-        );
-
     }
 
     pub fn decrypt(&self, data: &SaltedString) -> Vec<u8> {
         let key = self.decrypted_key.as_ref().unwrap();
 
         let key_iv = self.derive_md5(
-            key.slice_to(key.len() - 16),
+            key.as_slice(),
             data.salt.as_slice()
         );
 
@@ -163,34 +131,15 @@ impl EncryptionKey {
             self.data.data.as_slice()
         );
 
-        let mut key_log: Vec<u8> = Vec::new();
-        write_hex(&mut key_log, key.slice_to(32));
-        println!("key:    {}",
-            String::from_utf8(key_log).unwrap()
-        );
+        let key_vec = key.to_vec();
+        let key_copy = key_vec.as_slice();
 
         self.decrypted_key = Some(key);
 
         let ref valid = self.validation;
         let decrypted_validation = self.decrypt(valid);
 
-        println!("key: {}", self.decrypted_key.as_ref().unwrap().slice_to(10));
-        println!("val: {}", decrypted_validation.slice_to(10));
-        println!("key_len: {}", self.decrypted_key.as_ref().unwrap().len());
-        println!("val_len: {}", decrypted_validation.len());
-        true
-
-        /*
-        unlock: (password) ->
-            iterations = Math.max(1000, parseInt(@iterations || 0, 10))
-            decrypted = GibberishAES.decryptUsingPBKDF2(@data, password, iterations)
-            return false if !decrypted
-
-            verification = GibberishAES.decryptBase64UsingKey(@validation, GibberishAES.s2a(decrypted))
-            success = verification == decrypted
-            @value = decrypted if success
-            success
-        */
+        decrypted_validation == key_copy
     }
 }
 

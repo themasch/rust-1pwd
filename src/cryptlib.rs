@@ -15,7 +15,7 @@ pub fn decrypt_aes(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
     let mut remaining: uint;
     {
         let mut output = RefWriteBuffer::new(key_buffer.as_mut_slice());
-        enc.decrypt(&mut data, &mut output, true);
+        let result = enc.decrypt(&mut data, &mut output, true);
         remaining = output.remaining();
     }
 
