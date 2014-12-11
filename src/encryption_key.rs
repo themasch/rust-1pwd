@@ -16,7 +16,10 @@ struct SaltedString {
     data: Vec<u8>
 }
 
+
 impl<E, D: Decoder<E>> Decodable<D, E> for SaltedString {
+
+    /// # Decodes a salted string from json/base64
     fn decode(d: &mut D) -> Result<SaltedString, E> {
         let bytes = try!(d.read_str());
 

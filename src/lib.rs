@@ -9,3 +9,4 @@ pub use keychain::Keychain;
 mod cryptlib;
 mod encryption_key;
 mod keychain;
+mod items;
