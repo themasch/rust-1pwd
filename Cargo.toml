@@ -5,4 +5,5 @@ version = "0.0.1"
 authors = ["Mark Schmale <masch@masch.it>"]
 
 [dependencies]
-rust-crypto = "*"
+rustc-serialize = "0.3"
+openssl = "0.6.2"

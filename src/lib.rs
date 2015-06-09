@@ -1,8 +1,8 @@
-#![feature(slicing_syntax)]
+#![feature(test,convert,collections)]
 
-extern crate serialize;
 extern crate test;
-extern crate "rust-crypto" as rust_crypto;
+extern crate openssl;
+extern crate rustc_serialize;
 
 pub use keychain::Keychain;
 

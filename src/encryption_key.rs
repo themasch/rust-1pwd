@@ -1,15 +1,13 @@
-use serialize::base64::FromBase64;
+use rustc_serialize::base64::FromBase64;
 
-use serialize::{Decoder, Decodable};
+use rustc_serialize::{Decoder, Decodable};
+use rustc_serialize::hex::ToHex;
 
 use cryptlib::decrypt_aes;
 
-use rust_crypto::mac::Mac;
-use rust_crypto::pbkdf2::pbkdf2;
-use rust_crypto::md5::Md5;
-use rust_crypto::digest::Digest;
-use rust_crypto::hmac::Hmac;
-use rust_crypto::sha1::Sha1;
+use openssl::crypto::hash::Type;
+use openssl::crypto::hash::hash;
+use openssl::crypto::pkcs5::pbkdf2_hmac_sha1;
 
 struct SaltedString {
     salt: Vec<u8>,
@@ -17,23 +15,25 @@ struct SaltedString {
 }
 
 
-impl<E, D: Decoder<E>> Decodable<D, E> for SaltedString {
+impl Decodable for SaltedString {
 
     /// # Decodes a salted string from json/base64
-    fn decode(d: &mut D) -> Result<SaltedString, E> {
+    fn decode<D: Decoder>(d: &mut D) -> Result<SaltedString, D::Error> {
         let bytes = try!(d.read_str());
 
 
-        let data = bytes.slice_to(bytes.len() - 1);
+        let data = bytes.trim_matches('\0').as_bytes(); //(bytes.len() - 1);
         let decoded = data.from_base64();
 
         if !decoded.is_ok() {
+            println!("{:?}", data);
+            println!("{:?}", decoded);
             return Err(d.error("could not decode base64 data"));
         }
 
         let decoded_string = decoded.unwrap();
 
-        let prefix = decoded_string.slice_to(8);
+        let prefix: &[u8] = &decoded_string.as_slice()[0 .. 8];
 
         if prefix == "Salted__".as_bytes() {
             let salt: Vec<u8> = decoded_string[8..16].to_vec();
@@ -48,20 +48,20 @@ impl<E, D: Decoder<E>> Decodable<D, E> for SaltedString {
         let data: Vec<u8> =decoded_string.to_vec();
 
         return Ok(SaltedString {
-            salt: Vec::from_elem(16, 0),
+            salt: [0u8; 16].to_vec(),
             data: data
         });
     }
 }
 
-#[deriving(Decodable)]
+#[derive(RustcDecodable)]
 pub struct EncryptionKeyList {
     pub list: Vec<EncryptionKey>
 }
 
-#[deriving(Decodable)]
+#[derive(RustcDecodable)]
 pub struct EncryptionKey {
-    iterations: u32,
+    iterations: usize,
     level: String,
     identifier: String,
     validation: SaltedString,
@@ -71,28 +71,25 @@ pub struct EncryptionKey {
 }
 
 struct KeyIV {
-    key: [u8, ..16],
-    iv: [u8, ..16]
+    key: [u8; 16],
+    iv: [u8; 16]
 }
 
 impl EncryptionKey {
 
     pub fn derive_md5(&self, password: &[u8], salt: &[u8]) -> KeyIV {
         // init IV with md5
-        let mut input_vec = password.to_vec();
-        let mut key_arr = [0u8, ..16];
-        let mut iv_arr  = [0u8, ..16];
-        input_vec.push_all(salt);
+        let mut key_arr = [0u8; 16];
+        let mut key_input = password.to_vec();
+        key_input.push_all(salt);
 
-        let mut hash = Md5::new();
-        hash.input(input_vec.as_slice());
-        hash.result(&mut key_arr);
+        key_arr.move_from(hash(Type::MD5, &key_input), 0, 16);
 
+        let mut iv_arr  = [0u8; 16];
+        let mut iv_input = key_arr.to_vec();
+        iv_input.push_all(&key_input);
 
-        hash = Md5::new();
-        hash.input(&key_arr);
-        hash.input(input_vec.as_slice());
-        hash.result(&mut iv_arr);
+        iv_arr.move_from(hash(Type::MD5, &iv_input), 0, 16);
 
         let result = KeyIV {
             key: key_arr,
@@ -100,12 +97,6 @@ impl EncryptionKey {
         };
 
         return result;
-        //copy_memory(output, res.as_bytes())
-    }
-
-    pub fn derive_pbkdf2(&self, key: &[u8], salt: &[u8], output: &mut [u8]) {
-        let mut mac = Hmac::new(Sha1::new(), key);
-        pbkdf2(&mut mac, salt, self.iterations, output);
     }
 
     pub fn decrypt(&self, data: &SaltedString) -> Vec<u8> {
@@ -123,14 +114,14 @@ impl EncryptionKey {
         return data;
     }*/
 
-    pub fn unlock(&mut self, password: &[u8]) -> bool {
+    pub fn unlock(&mut self, password: &str) -> bool {
         let salt = self.data.salt.as_slice();
-        let mut buffer =  [0u8, ..32];
-        self.derive_pbkdf2(password, salt, &mut buffer);
+
+        let buffer = pbkdf2_hmac_sha1(password, salt, self.iterations, 32);
 
         let key = decrypt_aes(
-            buffer[0..16],
-            buffer[16..32],
+            &buffer[0..16],
+            &buffer[16..32],
             self.data.data.as_slice()
         );
 
@@ -149,7 +140,7 @@ impl EncryptionKey {
 #[cfg(test)]
 mod unittest {
 
-    use serialize::json;
+    use rustc_serialize::json;
     use keychain::{EncryptionKey, EncryptionKeyList};
 
     #[test]
@@ -163,12 +154,12 @@ mod unittest {
             "validation": "U2FsdGVkX1+NtjhEJU9qkGUxkqUjhSz8FZVXDsMMwlBwwzhOYHvsAxMzjBBEYYk4axYE6GLI44lZsDHWo7ltacWZcLnJETs9e3kmq6NTBYbwrwV6a9eH/lXNmL1nVhdt4TplmnJc7bF/mwZquZ1HTMbX8xTK3/LF3STA8xLKjDrjO8DQBitQfRtr43mN5eSB0Vn9skfGbENfzjxj0hpbqxKhEvC4ijFf8jXvyrjt9hr2HX1C4aJXJHAfkvrp5DMzzG2gMGzo4wLPqH5PrApIoZQD9ORRmmvKkoJ868yn6QKaQhynOP0Jt63sgvw0d0NmNztXClFKmsOYe3he+UbIQnPNCWEyK6/+gU+Rflb71tdpYsUFMeSH1AlTvyBW/jxqAH44/jzNIFILqPvd3dHqgo/I1OJzkn0ShN8gLZ2mYs9rMaCiGggiUd8GJtOeke90jFFCPqqb3D82uzBnbxJ49iziMHC19JFmSqi27leXR0vqr+2wX88oROAb54phSNs3islM3JxxnNqwj8xptOuzRTp6RaGt+9PKZh4vFDDehlM6wc4UwQrf92lSKFeT7Hha5KXiqb356Z4aAjFykvkMzgLaAICQOTNK5CtsOSwGtfl64LzOmN7Tk7LR2U70eUa0h2KCoxYhe+AaIQPEUUGKFMQ4lGsqZ10XAhRyefiFEUrMsORdFf5qbaKsLGudzNaU/t5megiRUN7X4vo3YUz/YLonHc2q2FO3n2RuiUY+L+qg5mI+lHwMFQs+1OyrUWvimp93XhmIc0PoSRrU95JGxY5CSxUkvso7aBN4R1tPqKyf6HZuAu80RUvJj6Lk5ylYD5z4oSrQ79wRhjIVW06VzZUSGUVS1+rTcnNDTpPfDtC2alr10fkljSYDDqypwFW4+J55+k70CRjLl39Ikt5M1rrT7YdrgzBF4a4XS0w9oKJPGI741Pr/EaupuKh49QE+FHnRed1+upRW3FtF+lI7P6+GnDjxWhZZFzX16OJlCRpKNc3+Aa4fEyv++k4whhOfwssIqeefy37Oe1fgjX8AgGhKUswuyCME8ctP/jpvqliKvCPHPzyHohquL3yn9bkZJsAAGP7bYok9Na0AcxErEVdmGGEadLDiXGVgILvXk5AxGvWVLp4dt5mctajx0mHClRz7XSF4YU0zftcZ84OCIbagbvH6TJy0iQv9GVTNGBE9zTH2GhDdHv/UFzXPN3f8rDGHZdBL1o9c5mEu3AoGi4pDokH0M1+mqyERXJhgkszKhFN+PMZfZT/92azIZNR7+GUCW9D1MI52wx00OuQCKskD8FhmMH6n6GpndP84YvWardOz7OTErxfgYpnI3g0mpy7UD5RuTIXSgFUAQDv8TC/EnuPFQBfMPlslkPCsSFR2mRemoGmxlQ7IARndAZos\u0000"
         }"#;
 
-        let decoded: EncryptionKey = json::decode(encoded.as_slice()).unwrap();
+        let decoded: EncryptionKey = json::decode(encoded).unwrap();
 
         let salt: Vec<u8> = vec![ 0x83, 0x1f, 0xa8, 0xf6, 0x4f, 0x26, 0x1e, 0x44 ];
         assert!(decoded.iterations == 10000);
-        assert!(decoded.level.as_slice() == "SL3");
-        assert!(decoded.identifier.as_slice() == "408C2E2D6A8B480893068AC602FA6D7B");
+        assert!(decoded.level.starts_with("SL3"));
+        assert!(decoded.identifier.starts_with("408C2E2D6A8B480893068AC602FA6D7B"));
         assert!(decoded.data.salt == salt);
 
     }
@@ -192,18 +183,18 @@ mod unittest {
             }]
         }"#;
 
-        let decoded: EncryptionKeyList = json::decode(encoded.as_slice()).unwrap();
+        let decoded: EncryptionKeyList = json::decode(encoded).unwrap();
 
         let salt: Vec<u8> = vec![ 0x83, 0x1f, 0xa8, 0xf6, 0x4f, 0x26, 0x1e, 0x44 ];
         assert!(decoded.list[0].iterations == 10000);
-        assert!(decoded.list[0].level.as_slice() == "SL3");
-        assert!(decoded.list[0].identifier.as_slice() == "408C2E2D6A8B480893068AC602FA6D7B");
+        assert!(decoded.list[0].level == "SL3");
+        assert!(decoded.list[0].identifier == "408C2E2D6A8B480893068AC602FA6D7B");
         assert!(decoded.list[0].data.salt == salt);
 
         let salt2: Vec<u8> = vec![ 0x50, 0x57, 0xf8, 0x11, 0x27, 0xf0, 0x9d, 0xf5 ];
         assert!(decoded.list[1].iterations == 42);
-        assert!(decoded.list[1].level.as_slice() == "SL5");
-        assert!(decoded.list[1].identifier.as_slice() == "AFB7B96135784496A1DB55BF6160C75B");
+        assert!(decoded.list[1].level == "SL5");
+        assert!(decoded.list[1].identifier == "AFB7B96135784496A1DB55BF6160C75B");
         assert!(decoded.list[1].data.salt == salt2);
     }
 }

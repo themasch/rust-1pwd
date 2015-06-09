@@ -1,13 +1,16 @@
-use std::io::File;
-use serialize::json;
-use serialize::json::DecoderError;
+use std::io::prelude::*;
+use std::fs::File;
+use rustc_serialize::json;
+use rustc_serialize::json::DecoderError;
 use std::error::Error;
+use std::path::Path;
+use std::path::PathBuf;
 
 pub use encryption_key::{EncryptionKey, EncryptionKeyList};
 pub use items::ContentItem;
 
 pub struct Keychain {
-    pub path: Path,
+    pub path: PathBuf,
     pub keys: Vec<EncryptionKey>,
     pub items: Vec<ContentItem>
 }
@@ -20,15 +23,17 @@ impl Keychain {
     ///
     /// * `path` - Path to the agilekeychain folder.
     ///
-    pub fn from_file(path: &Path) -> Option<Keychain> {    // TODO: switch to result here & put cool error messages
+    pub fn from_file(path: &PathBuf) -> Option<Keychain> {    // TODO: switch to result here & put cool error messages
         let key_path = path.join("data/default/encryptionKeys.js");
-        let contents = File::open(&key_path).read_to_string().unwrap();
+        let mut contents = String::new();
+        File::open(&key_path).unwrap().read_to_string(&mut contents);
 
         let item_path = path.join("data/default/contents.js");
-        let item_contents = File::open(&item_path).read_to_string().unwrap();
+        let mut item_contents = String::new();
+        File::open(&item_path).unwrap().read_to_string(&mut item_contents);
 
-        let key_list: EncryptionKeyList = json::decode(contents.as_slice()).unwrap();
-        let item_list: Vec<ContentItem> = json::decode(item_contents.as_slice()).unwrap();
+        let key_list: EncryptionKeyList = json::decode(contents.as_str()).unwrap();
+        let item_list: Vec<ContentItem> = json::decode(item_contents.as_str()).unwrap();
 
         return Some(Keychain {
             path: path.clone(),
@@ -40,7 +45,7 @@ impl Keychain {
     pub fn open(&mut self, password: &str) -> bool {
 
         for key in self.keys.iter_mut() {
-            if !key.unlock(password.as_bytes()) {
+            if !key.unlock(password) {
                 return false;
             }
         }
@@ -53,11 +58,13 @@ impl Keychain {
 #[cfg(test)]
 mod unittest {
 
+    use std::path::Path;
+    use std::path::PathBuf;
     use keychain::Keychain;
 
     #[test]
     fn load_keychain() {
-        let kc_path = Path::new("./testdata/1Password.agilekeychain");
+        let kc_path = PathBuf::from("./testdata/1Password.agilekeychain");
         let kc = Keychain::from_file(&kc_path).unwrap();
 
         assert!(kc.path == kc_path);
@@ -65,7 +72,7 @@ mod unittest {
 
     #[test]
     fn loads_content_keychain() {
-        let kc_path = Path::new("./testdata/1Password.agilekeychain");
+        let kc_path = PathBuf::from("./testdata/1Password.agilekeychain");
         let kc = Keychain::from_file(&kc_path).unwrap();
 
         assert!(kc.items[0].name == "Example Login");
@@ -73,14 +80,14 @@ mod unittest {
 
     #[test]
     fn unlock_keychain() {
-        let kc_path = Path::new("./testdata/1Password.agilekeychain");
+        let kc_path = PathBuf::from("./testdata/1Password.agilekeychain");
         let mut kc = Keychain::from_file(&kc_path).unwrap();
         assert!(kc.open("password"));
     }
 
     #[test]
     fn fail_to_unlock_keychain() {
-        let kc_path = Path::new("./testdata/1Password.agilekeychain");
+        let kc_path = PathBuf::from("./testdata/1Password.agilekeychain");
         let mut kc = Keychain::from_file(&kc_path).unwrap();
         assert!(!kc.open("not_the_password"));
     }
